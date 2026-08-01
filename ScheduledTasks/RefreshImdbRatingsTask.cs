@@ -62,8 +62,8 @@ public class RefreshImdbRatingsTask : IScheduledTask
     {
         var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
 
-        _logger.LogInformation("Starting IMDb ratings refresh (minVotes={MinVotes}, movies={Movies}, series={Series})",
-            config.MinimumVotes, config.IncludeMovies, config.IncludeSeries);
+        _logger.LogInformation("Starting IMDb ratings refresh (minVotes={MinVotes}, movies={Movies}, series={Series}, seasonAverages={SeasonAverages})",
+            config.MinimumVotes, config.IncludeMovies, config.IncludeSeries, config.IncludeSeasonAverages);
 
         // Step 1: Query library items and build a distinct IMDb ID filter set.
         progress.Report(0);
@@ -198,6 +198,56 @@ public class RefreshImdbRatingsTask : IScheduledTask
             }
         }
 
+        // Step 4b: Calculate season ratings as the average of eligible IMDb episode ratings
+        int seasonUpdated = 0;
+        int seasonSkippedNoRatings = 0;
+        int seasonSkippedUnchanged = 0;
+        if (config.IncludeSeries && config.IncludeSeasonAverages)
+        {
+            // Reuse the already-fetched episode results and group by Jellyfin's logical season ID.
+            var episodeData = items
+                .OfType<MediaBrowser.Controller.Entities.TV.Episode>()
+                .Where(e => e.SeasonId != Guid.Empty)
+                .Select(e => (
+                    SeasonId: e.SeasonId,
+                    ImdbId: e.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Imdb)));
+
+            var seasonAverages = SeasonRatingCalculator.CalculateSeasonAverages(episodeData, ratings, config.MinimumVotes);
+
+            // Query seasons for rating comparison and parent lookup during save
+            var seasonsById = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { BaseItemKind.Season },
+                IsVirtualItem = false,
+                Recursive = true
+            }).ToDictionary(s => s.Id);
+
+            foreach (var (seasonId, avgRating) in seasonAverages)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!seasonsById.TryGetValue(seasonId, out var season))
+                {
+                    continue;
+                }
+
+                if (season.CommunityRating.HasValue && Math.Abs(season.CommunityRating.Value - avgRating) < 0.01f)
+                {
+                    seasonSkippedUnchanged++;
+                    continue;
+                }
+
+                pendingUpdates.Add((season, season.GetParent(), season.CommunityRating, avgRating));
+                seasonUpdated++;
+            }
+
+            seasonSkippedNoRatings = seasonsById.Keys.Count(id => !seasonAverages.ContainsKey(id));
+
+            _logger.LogInformation(
+                "Season ratings: {Updated} to update, {SkippedUnchanged} unchanged, {SkippedNoRatings} skipped (no eligible episodes)",
+                seasonUpdated, seasonSkippedUnchanged, seasonSkippedNoRatings);
+        }
+
         progress.Report(90);
 
         // Step 5: Apply ratings and batch save, grouped by parent and chunked
@@ -281,8 +331,9 @@ public class RefreshImdbRatingsTask : IScheduledTask
         progress.Report(100);
         var skippedTotal = skippedMissingImdbId + skippedBelowMinimumVotes + skippedUnchanged;
         _logger.LogInformation(
-            "IMDb ratings refresh complete: {Updated} updated, {Skipped} skipped ({Unchanged} unchanged, {BelowMinimum} below minimum votes, {MissingImdbId} missing IMDb ID), {NotFound} not found in IMDb ratings",
+            "IMDb ratings refresh complete: {Updated} updated ({SeasonUpdated} seasons from episode averages), {Skipped} skipped ({Unchanged} unchanged, {BelowMinimum} below minimum votes, {MissingImdbId} missing IMDb ID), {NotFound} not found in IMDb ratings",
             pendingUpdates.Count,
+            seasonUpdated,
             skippedTotal,
             skippedUnchanged,
             skippedBelowMinimumVotes,
