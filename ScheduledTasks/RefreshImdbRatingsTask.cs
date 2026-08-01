@@ -62,8 +62,8 @@ public class RefreshImdbRatingsTask : IScheduledTask
     {
         var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
 
-        _logger.LogInformation("Starting IMDb ratings refresh (minVotes={MinVotes}, movies={Movies}, series={Series})",
-            config.MinimumVotes, config.IncludeMovies, config.IncludeSeries);
+        _logger.LogInformation("Starting IMDb ratings refresh (minVotes={MinVotes}, movies={Movies}, series={Series}, seasonAverages={SeasonAverages})",
+            config.MinimumVotes, config.IncludeMovies, config.IncludeSeries, config.IncludeSeasonAverages);
 
         // Step 1: Query library items and build a distinct IMDb ID filter set.
         progress.Report(0);
@@ -198,6 +198,86 @@ public class RefreshImdbRatingsTask : IScheduledTask
             }
         }
 
+        // Step 4b: Calculate season ratings as the average of their episode ratings
+        int seasonUpdated = 0;
+        int seasonSkippedNoRatings = 0;
+        int seasonSkippedUnchanged = 0;
+        if (config.IncludeSeries && config.IncludeSeasonAverages)
+        {
+            // Build a lookup of effective episode ratings: pending new value takes priority, then existing CommunityRating
+            var effectiveEpisodeRatings = new Dictionary<Guid, float>();
+            foreach (var (item, _, _, newRating) in pendingUpdates)
+            {
+                effectiveEpisodeRatings[item.Id] = newRating;
+            }
+
+            foreach (var item in items)
+            {
+                if (!effectiveEpisodeRatings.ContainsKey(item.Id) && item.CommunityRating.HasValue)
+                {
+                    effectiveEpisodeRatings[item.Id] = item.CommunityRating.Value;
+                }
+            }
+
+            var seasons = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { BaseItemKind.Season },
+                IsVirtualItem = false,
+                Recursive = true
+            });
+
+            foreach (var season in seasons)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var episodes = _libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    ParentId = season.Id,
+                    IncludeItemTypes = new[] { BaseItemKind.Episode },
+                    IsVirtualItem = false,
+                    Recursive = true
+                });
+
+                float ratingSum = 0;
+                int ratingCount = 0;
+
+                foreach (var episode in episodes)
+                {
+                    if (effectiveEpisodeRatings.TryGetValue(episode.Id, out var rating))
+                    {
+                        ratingSum += rating;
+                        ratingCount++;
+                    }
+                    else if (episode.CommunityRating.HasValue)
+                    {
+                        ratingSum += episode.CommunityRating.Value;
+                        ratingCount++;
+                    }
+                }
+
+                if (ratingCount == 0)
+                {
+                    seasonSkippedNoRatings++;
+                    continue;
+                }
+
+                float avgRating = MathF.Round(ratingSum / ratingCount, 1);
+
+                if (season.CommunityRating.HasValue && MathF.Abs(season.CommunityRating.Value - avgRating) < 0.01f)
+                {
+                    seasonSkippedUnchanged++;
+                    continue;
+                }
+
+                pendingUpdates.Add((season, season.GetParent(), season.CommunityRating, avgRating));
+                seasonUpdated++;
+            }
+
+            _logger.LogInformation(
+                "Season ratings: {Updated} to update, {SkippedUnchanged} unchanged, {SkippedNoRatings} skipped (no rated episodes)",
+                seasonUpdated, seasonSkippedUnchanged, seasonSkippedNoRatings);
+        }
+
         progress.Report(90);
 
         // Step 5: Apply ratings and batch save, grouped by parent and chunked
@@ -281,8 +361,9 @@ public class RefreshImdbRatingsTask : IScheduledTask
         progress.Report(100);
         var skippedTotal = skippedMissingImdbId + skippedBelowMinimumVotes + skippedUnchanged;
         _logger.LogInformation(
-            "IMDb ratings refresh complete: {Updated} updated, {Skipped} skipped ({Unchanged} unchanged, {BelowMinimum} below minimum votes, {MissingImdbId} missing IMDb ID), {NotFound} not found in IMDb ratings",
+            "IMDb ratings refresh complete: {Updated} updated ({SeasonUpdated} seasons from episode averages), {Skipped} skipped ({Unchanged} unchanged, {BelowMinimum} below minimum votes, {MissingImdbId} missing IMDb ID), {NotFound} not found in IMDb ratings",
             pendingUpdates.Count,
+            seasonUpdated,
             skippedTotal,
             skippedUnchanged,
             skippedBelowMinimumVotes,
