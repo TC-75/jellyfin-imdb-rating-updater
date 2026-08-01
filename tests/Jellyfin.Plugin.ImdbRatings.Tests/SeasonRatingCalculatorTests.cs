@@ -315,14 +315,14 @@ public class SeasonRatingCalculatorTests
         {
             ["tt0000001"] = (7.0f, 1000),
             ["tt0000002"] = (7.0f, 1000),
-            ["tt0000003"] = (8.0f, 1000),
-            ["tt0000004"] = (9.0f, 1000),
+            ["tt0000003"] = (7.0f, 1000),
+            ["tt0000004"] = (8.0f, 1000),
         };
 
         var result = SeasonRatingCalculator.CalculateSeasonAverages(episodes, ratings, minimumVotes: 1);
 
-        // (7+7+8+9)/4 = 7.75 → banker's rounding → 7.8
-        Assert.Equal(7.8f, result[seasonId]);
+        // (7+7+7+8)/4 = 7.25 → banker's rounding → 7.2
+        Assert.Equal(7.2f, result[seasonId]);
     }
 
     [Fact]
