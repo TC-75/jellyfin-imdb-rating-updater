@@ -17,7 +17,7 @@ public class PluginConfiguration : BasePluginConfiguration
 
     public bool IncludeSeries { get; set; } = true;
 
-    public bool IncludeSeasonAverages { get; set; } = true;
+    public bool IncludeSeasonAverages { get; set; } = false;
 
     public bool EnableItemDebugLogging { get; set; } = false;
 }

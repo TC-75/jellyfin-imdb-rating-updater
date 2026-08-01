@@ -48,8 +48,9 @@
                                 <span>Calculate Season Ratings</span>
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">
-                                When enabled, each season's Community Rating is set to the average of its episode ratings.
-                                Only has effect when "Include TV Series" is turned on.
+                                When enabled, each season's Community Rating is set to the average of eligible
+                                IMDb episode ratings in your library. Episodes without an IMDb rating or below
+                                the minimum votes threshold are excluded. Only has effect when "Include TV Series" is turned on.
                             </div>
                         </div>
 
@@ -70,7 +71,8 @@
                         <p style="margin: 0.5em 0;">
                             This plugin downloads the official IMDb ratings flat file daily and updates the
                             <strong>Community Rating</strong> field on all library items that have an IMDb ID.
-                            When enabled, season ratings are calculated as the average of their episode ratings.
+                            When enabled, season ratings are calculated as the average of eligible
+                            IMDb episode ratings in your library.
                             No other metadata (titles, posters, cast, etc.) is modified.
                         </p>
                         <p style="margin: 0.5em 0;">
@@ -146,7 +148,7 @@
                 document.getElementById('txtMinimumVotes').value = minimumVotes;
                 document.getElementById('chkIncludeMovies').checked = !!getConfigValue(config, 'IncludeMovies', 'includeMovies', true);
                 document.getElementById('chkIncludeSeries').checked = !!getConfigValue(config, 'IncludeSeries', 'includeSeries', true);
-                document.getElementById('chkIncludeSeasonAverages').checked = !!getConfigValue(config, 'IncludeSeasonAverages', 'includeSeasonAverages', true);
+                document.getElementById('chkIncludeSeasonAverages').checked = !!getConfigValue(config, 'IncludeSeasonAverages', 'includeSeasonAverages', false);
                 document.getElementById('chkEnableItemDebugLogging').checked = !!getConfigValue(
                     config,
                     'EnableItemDebugLogging',

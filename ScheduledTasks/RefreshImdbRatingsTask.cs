@@ -198,61 +198,63 @@ public class RefreshImdbRatingsTask : IScheduledTask
             }
         }
 
-        // Step 4b: Calculate season ratings as the average of their episode ratings
+        // Step 4b: Calculate season ratings as the average of eligible IMDb episode ratings
         int seasonUpdated = 0;
         int seasonSkippedNoRatings = 0;
         int seasonSkippedUnchanged = 0;
         if (config.IncludeSeries && config.IncludeSeasonAverages)
         {
-            // Build a lookup of effective episode ratings: pending new value takes priority, then existing CommunityRating
-            var effectiveEpisodeRatings = new Dictionary<Guid, float>();
-            foreach (var (item, _, _, newRating) in pendingUpdates)
+            // Query episodes with IMDb IDs once and group by season (ParentId) to avoid N+1 queries
+            var episodesBySeason = _libraryManager.GetItemList(new InternalItemsQuery
             {
-                effectiveEpisodeRatings[item.Id] = newRating;
-            }
+                IncludeItemTypes = new[] { BaseItemKind.Episode },
+                HasImdbId = true,
+                IsVirtualItem = false,
+                Recursive = true
+            })
+                .Where(e => e.ParentId != Guid.Empty)
+                .GroupBy(e => e.ParentId);
 
-            foreach (var item in items)
-            {
-                if (!effectiveEpisodeRatings.ContainsKey(item.Id) && item.CommunityRating.HasValue)
-                {
-                    effectiveEpisodeRatings[item.Id] = item.CommunityRating.Value;
-                }
-            }
-
-            var seasons = _libraryManager.GetItemList(new InternalItemsQuery
+            // Query all seasons for rating comparison and parent lookup during save
+            var seasonsById = _libraryManager.GetItemList(new InternalItemsQuery
             {
                 IncludeItemTypes = new[] { BaseItemKind.Season },
                 IsVirtualItem = false,
                 Recursive = true
-            });
+            }).ToDictionary(s => s.Id);
 
-            foreach (var season in seasons)
+            foreach (var group in episodesBySeason)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var episodes = _libraryManager.GetItemList(new InternalItemsQuery
+                if (!seasonsById.TryGetValue(group.Key, out var season))
                 {
-                    ParentId = season.Id,
-                    IncludeItemTypes = new[] { BaseItemKind.Episode },
-                    IsVirtualItem = false,
-                    Recursive = true
-                });
+                    continue;
+                }
 
                 float ratingSum = 0;
                 int ratingCount = 0;
 
-                foreach (var episode in episodes)
+                foreach (var episode in group)
                 {
-                    if (effectiveEpisodeRatings.TryGetValue(episode.Id, out var rating))
+                    var episodeImdbId = episode.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Imdb);
+                    if (string.IsNullOrEmpty(episodeImdbId))
                     {
-                        ratingSum += rating;
-                        ratingCount++;
+                        continue;
                     }
-                    else if (episode.CommunityRating.HasValue)
+
+                    if (!ratings.TryGetValue(episodeImdbId, out var ratingData))
                     {
-                        ratingSum += episode.CommunityRating.Value;
-                        ratingCount++;
+                        continue;
                     }
+
+                    if (ratingData.Votes < config.MinimumVotes)
+                    {
+                        continue;
+                    }
+
+                    ratingSum += ratingData.Rating;
+                    ratingCount++;
                 }
 
                 if (ratingCount == 0)
@@ -263,7 +265,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
 
                 float avgRating = MathF.Round(ratingSum / ratingCount, 1);
 
-                if (season.CommunityRating.HasValue && MathF.Abs(season.CommunityRating.Value - avgRating) < 0.01f)
+                if (season.CommunityRating.HasValue && Math.Abs(season.CommunityRating.Value - avgRating) < 0.01f)
                 {
                     seasonSkippedUnchanged++;
                     continue;
@@ -274,7 +276,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
             }
 
             _logger.LogInformation(
-                "Season ratings: {Updated} to update, {SkippedUnchanged} unchanged, {SkippedNoRatings} skipped (no rated episodes)",
+                "Season ratings: {Updated} to update, {SkippedUnchanged} unchanged, {SkippedNoRatings} skipped (no eligible episodes)",
                 seasonUpdated, seasonSkippedUnchanged, seasonSkippedNoRatings);
         }
 
