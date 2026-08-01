@@ -204,8 +204,8 @@ public class RefreshImdbRatingsTask : IScheduledTask
         int seasonSkippedUnchanged = 0;
         if (config.IncludeSeries && config.IncludeSeasonAverages)
         {
-            // Query episodes with IMDb IDs once and group by season (ParentId) to avoid N+1 queries
-            var episodesBySeason = _libraryManager.GetItemList(new InternalItemsQuery
+            // Query episodes with IMDb IDs once and project to (SeasonId, ImdbId) pairs
+            var episodeData = _libraryManager.GetItemList(new InternalItemsQuery
             {
                 IncludeItemTypes = new[] { BaseItemKind.Episode },
                 HasImdbId = true,
@@ -213,9 +213,11 @@ public class RefreshImdbRatingsTask : IScheduledTask
                 Recursive = true
             })
                 .Where(e => e.ParentId != Guid.Empty)
-                .GroupBy(e => e.ParentId);
+                .Select(e => (SeasonId: e.ParentId, ImdbId: e.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Imdb)));
 
-            // Query all seasons for rating comparison and parent lookup during save
+            var seasonAverages = SeasonRatingCalculator.CalculateSeasonAverages(episodeData, ratings, config.MinimumVotes);
+
+            // Query seasons for rating comparison and parent lookup during save
             var seasonsById = _libraryManager.GetItemList(new InternalItemsQuery
             {
                 IncludeItemTypes = new[] { BaseItemKind.Season },
@@ -223,47 +225,14 @@ public class RefreshImdbRatingsTask : IScheduledTask
                 Recursive = true
             }).ToDictionary(s => s.Id);
 
-            foreach (var group in episodesBySeason)
+            foreach (var (seasonId, avgRating) in seasonAverages)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (!seasonsById.TryGetValue(group.Key, out var season))
+                if (!seasonsById.TryGetValue(seasonId, out var season))
                 {
                     continue;
                 }
-
-                float ratingSum = 0;
-                int ratingCount = 0;
-
-                foreach (var episode in group)
-                {
-                    var episodeImdbId = episode.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Imdb);
-                    if (string.IsNullOrEmpty(episodeImdbId))
-                    {
-                        continue;
-                    }
-
-                    if (!ratings.TryGetValue(episodeImdbId, out var ratingData))
-                    {
-                        continue;
-                    }
-
-                    if (ratingData.Votes < config.MinimumVotes)
-                    {
-                        continue;
-                    }
-
-                    ratingSum += ratingData.Rating;
-                    ratingCount++;
-                }
-
-                if (ratingCount == 0)
-                {
-                    seasonSkippedNoRatings++;
-                    continue;
-                }
-
-                float avgRating = MathF.Round(ratingSum / ratingCount, 1);
 
                 if (season.CommunityRating.HasValue && Math.Abs(season.CommunityRating.Value - avgRating) < 0.01f)
                 {
@@ -274,6 +243,8 @@ public class RefreshImdbRatingsTask : IScheduledTask
                 pendingUpdates.Add((season, season.GetParent(), season.CommunityRating, avgRating));
                 seasonUpdated++;
             }
+
+            seasonSkippedNoRatings = seasonsById.Keys.Count(id => !seasonAverages.ContainsKey(id));
 
             _logger.LogInformation(
                 "Season ratings: {Updated} to update, {SkippedUnchanged} unchanged, {SkippedNoRatings} skipped (no eligible episodes)",
