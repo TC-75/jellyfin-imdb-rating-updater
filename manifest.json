@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/voc0der/jellyfin-imdb-rating-updater/main/icon.png",
     "versions": [
       {
+        "version": "1.0.0.20",
+        "changelog": "## What's Changed\n\n- test: tighten .NET 9 and midpoint coverage (7dae738)\n- chore(deps): Bump actions/setup-dotnet from 5 to 6 (40f1eff)\n- chore(deps): Bump actions/checkout from 6 to 7 (6619bf1)\n- fix: use Episode.SeasonId, retarget tests to net9.0, add CI test step (7b78f8d)\n- Extract SeasonRatingCalculator and add tests (77fb535)\n- fix: address PR review feedback for season ratings (d38c60b)\n- feat: add season ratings calculated from episode averages (ef284ce)\n- docs: remove star history section [skip ci] (8da625a)\n- chore: add icon to repo. [skip ci] (0dd3e96)\n\n**Full Changelog**: https://github.com/voc0der/jellyfin-imdb-rating-updater/compare/1.0.0.19...1.0.0.20\n",
+        "targetAbi": "10.11.6.0",
+        "sourceUrl": "https://github.com/voc0der/jellyfin-imdb-rating-updater/releases/download/1.0.0.20/IMDb_Ratings_1.0.0.20.zip",
+        "checksum": "346fbdaf773e3a2fb55df732040eac7c",
+        "timestamp": "2026-08-01T17:59:50Z"
+      },
+      {
         "version": "1.0.0.19",
         "changelog": "## What's Changed\n\n- chore: Bump the jellyfin-packages group with 2 updates (74cbd0b)\n- docs(readme): clarify scheduled task timing [skip ci] (95a3190)\n- docs(readme): refresh project presentation [skip ci] (2cdbebb)\n- chore(deps): bump actions/upload-artifact from 6 to 7 (162152d)\n\n**Full Changelog**: https://github.com/voc0der/jellyfin-imdb-rating-updater/compare/1.0.0.18...1.0.0.19\n",
         "targetAbi": "10.11.6.0",
