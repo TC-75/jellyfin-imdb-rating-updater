@@ -26,3 +26,6 @@ jobs:
 
     - name: Check C# style formatting
       run: dotnet format style --verify-no-changes --severity warn --verbosity minimal
+
+    - name: Run tests
+      run: dotnet test tests/Jellyfin.Plugin.ImdbRatings.Tests/ --verbosity minimal

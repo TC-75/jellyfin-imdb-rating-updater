@@ -204,16 +204,13 @@ public class RefreshImdbRatingsTask : IScheduledTask
         int seasonSkippedUnchanged = 0;
         if (config.IncludeSeries && config.IncludeSeasonAverages)
         {
-            // Query episodes with IMDb IDs once and project to (SeasonId, ImdbId) pairs
-            var episodeData = _libraryManager.GetItemList(new InternalItemsQuery
-            {
-                IncludeItemTypes = new[] { BaseItemKind.Episode },
-                HasImdbId = true,
-                IsVirtualItem = false,
-                Recursive = true
-            })
-                .Where(e => e.ParentId != Guid.Empty)
-                .Select(e => (SeasonId: e.ParentId, ImdbId: e.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Imdb)));
+            // Reuse the already-fetched episode results and group by Jellyfin's logical season ID.
+            var episodeData = items
+                .OfType<MediaBrowser.Controller.Entities.TV.Episode>()
+                .Where(e => e.SeasonId != Guid.Empty)
+                .Select(e => (
+                    SeasonId: e.SeasonId,
+                    ImdbId: e.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Imdb)));
 
             var seasonAverages = SeasonRatingCalculator.CalculateSeasonAverages(episodeData, ratings, config.MinimumVotes);
 
