@@ -65,12 +65,28 @@ public class RefreshImdbRatingsTask : IScheduledTask
         _logger.LogInformation("Starting IMDb ratings refresh (minVotes={MinVotes}, movies={Movies}, series={Series}, seasonAverages={SeasonAverages})",
             config.MinimumVotes, config.IncludeMovies, config.IncludeSeries, config.IncludeSeasonAverages);
 
+        // Reclaim the provider's disk and memory before any network, parsing, or library work can fail. The
+        // scheduled rating refresh remains enabled independently and continues below.
+        if (!IsMetadataProviderCurrentlyEnabled(config))
+        {
+            DisableProviderIndex();
+        }
+
+        var downloader = new ImdbFlatFileDownloader(
+            _httpClientFactory,
+            _loggerFactory.CreateLogger<ImdbFlatFileDownloader>(),
+            _dataPath);
+        var parser = new ImdbRatingsParser(_loggerFactory.CreateLogger<ImdbRatingsParser>());
+
         // Step 1: Query library items and build a distinct IMDb ID filter set.
         progress.Report(0);
         var items = GetLibraryItems(config);
         if (items.Count == 0)
         {
             _logger.LogInformation("Found 0 library items with IMDb IDs");
+
+            // An empty library still needs an index built, so the provider can rate the very first scan.
+            await TryWriteProviderIndexAsync(downloader, parser, config, cancellationToken).ConfigureAwait(false);
             progress.Report(100);
             return;
         }
@@ -93,6 +109,8 @@ public class RefreshImdbRatingsTask : IScheduledTask
         if (libraryImdbIds.Count == 0)
         {
             _logger.LogWarning("No valid IMDb IDs found on selected library items — nothing to update");
+
+            await TryWriteProviderIndexAsync(downloader, parser, config, cancellationToken).ConfigureAwait(false);
             progress.Report(100);
             return;
         }
@@ -100,12 +118,6 @@ public class RefreshImdbRatingsTask : IScheduledTask
         progress.Report(5);
 
         // Step 2: Download/cache the ratings file, Step 3: Parse ratings (filtered to library IMDb IDs)
-        var downloader = new ImdbFlatFileDownloader(
-            _httpClientFactory,
-            _loggerFactory.CreateLogger<ImdbFlatFileDownloader>(),
-            _dataPath);
-        var parser = new ImdbRatingsParser(_loggerFactory.CreateLogger<ImdbRatingsParser>());
-
         var ratings = await DownloadAndParseWithRetryAsync(
             downloader,
             parser,
@@ -328,6 +340,9 @@ public class RefreshImdbRatingsTask : IScheduledTask
             }
         }
 
+        // Step 6: Refresh the compact index the scan-time metadata provider reads.
+        await TryWriteProviderIndexAsync(downloader, parser, config, cancellationToken).ConfigureAwait(false);
+
         progress.Report(100);
         var skippedTotal = skippedMissingImdbId + skippedBelowMinimumVotes + skippedUnchanged;
         _logger.LogInformation(
@@ -339,6 +354,73 @@ public class RefreshImdbRatingsTask : IScheduledTask
             skippedBelowMinimumVotes,
             skippedMissingImdbId,
             notFound);
+    }
+
+    /// <summary>
+    /// Rebuilds the compact index used by <see cref="Providers.ImdbRatingsItemProvider"/>.
+    /// </summary>
+    /// <remarks>
+    /// The index is an enhancement rather than part of the refresh contract, so any failure here is logged
+    /// and swallowed: the ratings written above are already committed and must not be reported as failed.
+    /// The stale index stays in place until the next successful run.
+    /// </remarks>
+    private async Task TryWriteProviderIndexAsync(
+        ImdbFlatFileDownloader downloader,
+        ImdbRatingsParser parser,
+        PluginConfiguration config,
+        CancellationToken cancellationToken)
+    {
+        var indexPath = ImdbRatingsIndex.GetIndexPath(_dataPath);
+
+        if (!IsMetadataProviderCurrentlyEnabled(config))
+        {
+            // The setting may have changed while the scheduled refresh was running.
+            DisableProviderIndex();
+            return;
+        }
+
+        try
+        {
+            // The task is the sole writer of the index and may download to build it; the provider never does.
+            var ratingsFilePath = await GetRatingsFilePathWithTransientRetryAsync(downloader, cancellationToken)
+                .ConfigureAwait(false);
+
+            var index = await parser.BuildIndexAsync(ratingsFilePath, cancellationToken).ConfigureAwait(false);
+
+            // Building can take long enough for the setting to change. Avoid publishing work that was disabled
+            // while the task was running.
+            if (!IsMetadataProviderCurrentlyEnabled(config))
+            {
+                DisableProviderIndex();
+                return;
+            }
+
+            await index.WriteAsync(indexPath, cancellationToken).ConfigureAwait(false);
+
+            // If disable raced the asynchronous write, the configuration callback deleted the old destination
+            // before File.Move published this one. Delete the newly published file as the later operation.
+            if (!IsMetadataProviderCurrentlyEnabled(config))
+            {
+                DisableProviderIndex();
+                return;
+            }
+
+            ImdbRatingsIndexCache.InvalidateShared();
+
+            _logger.LogInformation(
+                "Wrote IMDb ratings index: {Count} titles, {SizeMb:F1} MB at {Path}",
+                index.Count,
+                index.ApproximateSizeInBytes / (1024d * 1024d),
+                indexPath);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to build IMDb ratings index; scan-time ratings will use the previous index if present");
+        }
     }
 
     private async Task<Dictionary<string, (float Rating, int Votes)>> DownloadAndParseWithRetryAsync(
@@ -379,7 +461,10 @@ public class RefreshImdbRatingsTask : IScheduledTask
     {
         try
         {
-            var filePath = await downloader.GetRatingsFilePathAsync(cancellationToken).ConfigureAwait(false);
+            // Cache invalidation above forces a fresh download. Use the same timeout-aware retry path as the
+            // initial attempt so an exhausted HttpClient timeout is reported as failure, not cancellation.
+            var filePath = await GetRatingsFilePathWithTransientRetryAsync(downloader, cancellationToken)
+                .ConfigureAwait(false);
             progress.Report(10);
             return await parser.ParseFilteredAsync(filePath, includeImdbIds, cancellationToken).ConfigureAwait(false);
         }
@@ -398,7 +483,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
         {
             return await downloader.GetRatingsFilePathAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (IsTransientNetworkError(ex))
+        catch (Exception ex) when (IsTransientNetworkError(ex, cancellationToken))
         {
             // Transient download error — try once more after a short delay, or fall back to stale cache.
             _logger.LogWarning(ex, "Transient network error downloading IMDb ratings; retrying once after delay");
@@ -409,11 +494,21 @@ public class RefreshImdbRatingsTask : IScheduledTask
             {
                 return await downloader.GetRatingsFilePathAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception retryEx) when (IsTransientNetworkError(retryEx))
+            catch (Exception retryEx) when (IsTransientNetworkError(retryEx, cancellationToken))
             {
                 if (!downloader.HasCacheFile)
                 {
                     _logger.LogError(retryEx, "Download failed after retry and no cached ratings file exists");
+
+                    // HttpClient represents its own timeout as TaskCanceledException. Jellyfin treats every
+                    // OperationCanceledException as a user-cancelled scheduled task, so translate an exhausted
+                    // timeout when the scheduler token itself remains active.
+                    if (retryEx is OperationCanceledException timeoutException
+                        && !cancellationToken.IsCancellationRequested)
+                    {
+                        throw CreateExhaustedTimeoutException(timeoutException);
+                    }
+
                     throw;
                 }
 
@@ -425,10 +520,51 @@ public class RefreshImdbRatingsTask : IScheduledTask
         }
     }
 
-    private static bool IsTransientNetworkError(Exception ex)
+    internal static bool IsTransientNetworkError(Exception ex, CancellationToken cancellationToken)
     {
         return ex is HttpRequestException
-            || (ex is IOException && ex is not InvalidDataException);
+            || (ex is IOException && ex is not InvalidDataException)
+            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested);
+    }
+
+    internal static bool ResolveMetadataProviderEnabled(
+        PluginConfiguration taskConfiguration,
+        PluginConfiguration? currentConfiguration)
+    {
+        ArgumentNullException.ThrowIfNull(taskConfiguration);
+        return (currentConfiguration ?? taskConfiguration).EnableMetadataProvider;
+    }
+
+    internal static HttpRequestException CreateExhaustedTimeoutException(OperationCanceledException exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        return new HttpRequestException("IMDb ratings download timed out after retry.", exception);
+    }
+
+    private static bool IsMetadataProviderCurrentlyEnabled(PluginConfiguration taskConfiguration)
+    {
+        return ResolveMetadataProviderEnabled(taskConfiguration, Plugin.Instance?.Configuration);
+    }
+
+    private void DisableProviderIndex()
+    {
+        var indexPath = ImdbRatingsIndex.GetIndexPath(_dataPath);
+
+        try
+        {
+            if (File.Exists(indexPath))
+            {
+                File.Delete(indexPath);
+                _logger.LogInformation("Scan-time provider disabled; removed IMDb ratings index at {Path}", indexPath);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Failed to remove IMDb ratings index at {Path}", indexPath);
+        }
+
+        // Drop the loaded copy even if disk cleanup failed; a disabled provider must not retain its memory.
+        ImdbRatingsIndexCache.InvalidateShared();
     }
 
     private IReadOnlyList<BaseItem> GetLibraryItems(PluginConfiguration config)
