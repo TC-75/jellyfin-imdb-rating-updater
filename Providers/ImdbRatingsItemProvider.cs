@@ -149,3 +149,5 @@ public class ImdbRatingsItemProvider :
         item.CommunityRating = rating;
         item.CustomRating = newCustomRating;
         return ItemUpdateType.MetadataDownload;
+    }
+}
