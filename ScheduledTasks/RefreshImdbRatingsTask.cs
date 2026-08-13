@@ -42,7 +42,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
 
     public string Key => "RefreshImdbRatings";
 
-    public string Description => "Downloads the IMDb ratings flat file and updates CommunityRating on all library items with an IMDb ID.";
+    public string Description => "Downloads the IMDb ratings flat file and updates CommunityRating and CustomRating with IMDb rating and vote count on all library items with an IMDb ID.";
 
     public string Category => "IMDb Ratings";
 
@@ -128,7 +128,13 @@ public class RefreshImdbRatingsTask : IScheduledTask
         int lastScanProgressBucket = 30;
 
         // Step 4: Identify items that need rating updates (without mutating in-memory state)
-        var pendingUpdates = new List<(BaseItem Item, BaseItem? Parent, float? OldRating, float NewRating)>();
+        var pendingUpdates = new List<(
+            BaseItem Item,
+            BaseItem? Parent,
+            float? OldRating,
+            string? OldCustomRating,
+            float NewRating,
+            string? NewCustomRating)>();
         int skippedMissingImdbId = 0;
         int skippedBelowMinimumVotes = 0;
         int skippedUnchanged = 0;
@@ -170,13 +176,32 @@ public class RefreshImdbRatingsTask : IScheduledTask
             else
             {
                 var newRating = ratingData.Rating;
-                if (item.CommunityRating.HasValue && Math.Abs(item.CommunityRating.Value - newRating) < 0.01f)
+                var newCustomRating = ratingData.Votes.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture);
+
+                var ratingUnchanged =
+                    item.CommunityRating.HasValue
+                    && Math.Abs(item.CommunityRating.Value - newRating) < 0.01f;
+
+                var votesUnchanged =
+                    string.Equals(
+                        item.CustomRating,
+                        newCustomRating,
+                        StringComparison.Ordinal);
+
+                if (ratingUnchanged && votesUnchanged)
                 {
                     skippedUnchanged++;
                 }
                 else
                 {
-                    pendingUpdates.Add((item, item.GetParent(), item.CommunityRating, newRating));
+                    pendingUpdates.Add((
+                        item,
+                        item.GetParent(),
+                        item.CommunityRating,
+                        item.CustomRating,
+                        newRating,
+                        newCustomRating));
                 }
             }
 
@@ -249,7 +274,13 @@ public class RefreshImdbRatingsTask : IScheduledTask
                     continue;
                 }
 
-                pendingUpdates.Add((season, season.GetParent(), season.CommunityRating, avgRating));
+                pendingUpdates.Add((
+                    season,
+                    season.GetParent(),
+                    season.CommunityRating,
+                    season.CustomRating,
+                    avgRating,
+                    season.CustomRating));
                 seasonUpdated++;
             }
 
@@ -265,7 +296,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
         // Step 5: Apply ratings and batch save, grouped by parent and chunked
         if (pendingUpdates.Count > 0)
         {
-            _logger.LogInformation("Batch saving {Count} updated ratings to database", pendingUpdates.Count);
+            _logger.LogInformation("Batch saving {Count} updated IMDb ratings/vote counts to database", pendingUpdates.Count);
 
             const int batchSize = 500;
             var byParent = pendingUpdates.GroupBy(p => p.Parent?.Id ?? Guid.Empty);
@@ -286,6 +317,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
                         for (int j = 0; j < chunk.Length; j++)
                         {
                             chunk[j].Item.CommunityRating = chunk[j].NewRating;
+                            chunk[j].Item.CustomRating = chunk[j].NewCustomRating;
                             try
                             {
                                 await _libraryManager.UpdateItemAsync(
@@ -297,6 +329,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
                             catch
                             {
                                 chunk[j].Item.CommunityRating = chunk[j].OldRating;
+                                chunk[j].Item.CustomRating = chunk[j].OldCustomRating;
                                 throw;
                             }
                         }
@@ -308,6 +341,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
                         for (int j = 0; j < chunk.Length; j++)
                         {
                             chunk[j].Item.CommunityRating = chunk[j].NewRating;
+                            chunk[j].Item.CustomRating = chunk[j].NewCustomRating;
                             chunkItems[j] = chunk[j].Item;
                         }
 
@@ -321,6 +355,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
                             for (int j = 0; j < chunk.Length; j++)
                             {
                                 chunk[j].Item.CommunityRating = chunk[j].OldRating;
+                                chunk[j].Item.CustomRating = chunk[j].OldCustomRating;
                             }
 
                             throw;
@@ -346,7 +381,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
         progress.Report(100);
         var skippedTotal = skippedMissingImdbId + skippedBelowMinimumVotes + skippedUnchanged;
         _logger.LogInformation(
-            "IMDb ratings refresh complete: {Updated} updated ({SeasonUpdated} seasons from episode averages), {Skipped} skipped ({Unchanged} unchanged, {BelowMinimum} below minimum votes, {MissingImdbId} missing IMDb ID), {NotFound} not found in IMDb ratings",
+            "IMDb ratings refresh complete: {Updated} items updated with ratings/vote counts ({SeasonUpdated} seasons from episode averages), {Skipped} skipped ({Unchanged} unchanged, {BelowMinimum} below minimum votes, {MissingImdbId} missing IMDb ID), {NotFound} not found in IMDb ratings",
             pendingUpdates.Count,
             seasonUpdated,
             skippedTotal,
