@@ -116,23 +116,37 @@ public class ImdbRatingsItemProvider :
             return ItemUpdateType.None;
         }
 
-        // Match the scheduled task's tolerance so the two paths agree on what counts as a change.
-        if (item.CommunityRating.HasValue && Math.Abs(item.CommunityRating.Value - rating) < 0.01f)
-        {
-            return ItemUpdateType.None;
-        }
+// Store the IMDb vote count in CustomRating.
+// CustomRating is a string, so use an invariant unformatted integer value.
+var newCustomRating = votes.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
+// Match the scheduled task's tolerance so the two paths agree on what counts as a change.
+var ratingUnchanged =
+    item.CommunityRating.HasValue
+    && Math.Abs(item.CommunityRating.Value - rating) < 0.01f;
+
+var votesUnchanged =
+    string.Equals(
+        item.CustomRating,
+        newCustomRating,
+        StringComparison.Ordinal);
+
+if (ratingUnchanged && votesUnchanged)
+{
+    return ItemUpdateType.None;
+}
         if (config.EnableItemDebugLogging && _logger.IsEnabled(LogLevel.Debug))
         {
-            _logger.LogDebug(
-                "Applying IMDb rating {Rating} ({Votes} votes) to \"{Name}\" ({ImdbId}) at scan time",
-                rating,
-                votes,
-                item.Name,
-                imdbId);
+_logger.LogDebug(
+    "Applying IMDb rating {Rating} to CommunityRating and {Votes} votes to CustomRating for \"{Name}\" ({ImdbId}) at scan time",
+    rating,
+    votes,
+    item.Name,
+    imdbId);
         }
 
-        item.CommunityRating = rating;
-        return ItemUpdateType.MetadataDownload;
+item.CommunityRating = rating;
+item.CustomRating = newCustomRating;
+return ItemUpdateType.MetadataDownload;
     }
 }
