@@ -293,7 +293,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
 
         progress.Report(90);
 
-        // Step 5: Apply ratings and batch save, grouped by parent and chunked
+        // Step 5: Apply ratings and vote counts and batch save, grouped by parent and chunked
         if (pendingUpdates.Count > 0)
         {
             _logger.LogInformation("Batch saving {Count} updated IMDb ratings/vote counts to database", pendingUpdates.Count);
