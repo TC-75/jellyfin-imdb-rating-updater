@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.ImdbRatings.Configuration;
@@ -112,22 +113,14 @@ public class ImdbRatingsItemProvider :
             return ItemUpdateType.None;
         }
 
-        // Store the IMDb vote count in CustomRating.
-        // CustomRating is a string, so use an invariant unformatted integer value.
-        var newCustomRating = votes.ToString(System.Globalization.CultureInfo.InvariantCulture);
-
         // Match the scheduled task's tolerance so the two paths agree on what counts as a change.
         var ratingUnchanged =
             item.CommunityRating.HasValue
             && Math.Abs(item.CommunityRating.Value - rating) < 0.01f;
 
-        var votesUnchanged =
-            string.Equals(
-                item.CustomRating,
-                newCustomRating,
-                StringComparison.Ordinal);
+        var votesChanged = HasMeaningfulVoteChange(item.CustomRating, votes);
 
-        if (ratingUnchanged && votesUnchanged)
+        if (ratingUnchanged && !votesChanged)
         {
             return ItemUpdateType.None;
         }
@@ -135,15 +128,34 @@ public class ImdbRatingsItemProvider :
         if (config.EnableItemDebugLogging && _logger.IsEnabled(LogLevel.Debug))
         {
             _logger.LogDebug(
-                "Applying IMDb rating {Rating} to CommunityRating and {Votes} votes to CustomRating for \"{Name}\" ({ImdbId}) at scan time",
+                "Applying IMDb rating {Rating} to CommunityRating and vote count {Votes} to CustomRating={UpdateVotes} for \"{Name}\" ({ImdbId}) at scan time",
                 rating,
                 votes,
+                votesChanged,
                 item.Name,
                 imdbId);
         }
 
         item.CommunityRating = rating;
-        item.CustomRating = newCustomRating;
+        if (votesChanged)
+        {
+            item.CustomRating = votes.ToString(CultureInfo.InvariantCulture);
+        }
+
         return ItemUpdateType.MetadataDownload;
+    }
+
+    private static bool HasMeaningfulVoteChange(string? currentCustomRating, int newVotes)
+    {
+        if (!int.TryParse(currentCustomRating, NumberStyles.None, CultureInfo.InvariantCulture, out var oldVotes)
+            || oldVotes <= 0)
+        {
+            return true;
+        }
+
+        var voteDifference = Math.Abs((long)newVotes - oldVotes);
+        var percentageDifference = (double)voteDifference / oldVotes;
+
+        return voteDifference >= 20 && percentageDifference >= 0.05;
     }
 }
