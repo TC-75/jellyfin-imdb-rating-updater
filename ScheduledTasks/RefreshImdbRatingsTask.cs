@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -192,20 +193,16 @@ public class RefreshImdbRatingsTask : IScheduledTask
             else
             {
                 var newRating = ratingData.Rating;
-                var newCustomRating = ratingData.Votes.ToString(
-                    System.Globalization.CultureInfo.InvariantCulture);
-
                 var ratingUnchanged =
                     item.CommunityRating.HasValue
                     && Math.Abs(item.CommunityRating.Value - newRating) < 0.01f;
 
-                var votesUnchanged =
-                    string.Equals(
-                        item.CustomRating,
-                        newCustomRating,
-                        StringComparison.Ordinal);
+                var votesChanged = HasMeaningfulVoteChange(item.CustomRating, ratingData.Votes);
+                var newCustomRating = votesChanged
+                    ? ratingData.Votes.ToString(CultureInfo.InvariantCulture)
+                    : item.CustomRating;
 
-                if (ratingUnchanged && votesUnchanged)
+                if (ratingUnchanged && !votesChanged)
                 {
                     skippedUnchanged++;
                 }
@@ -616,6 +613,20 @@ public class RefreshImdbRatingsTask : IScheduledTask
 
         // Drop the loaded copy even if disk cleanup failed; a disabled provider must not retain its memory.
         ImdbRatingsIndexCache.InvalidateShared();
+    }
+
+    private static bool HasMeaningfulVoteChange(string? currentCustomRating, int newVotes)
+    {
+        if (!int.TryParse(currentCustomRating, NumberStyles.None, CultureInfo.InvariantCulture, out var oldVotes)
+            || oldVotes <= 0)
+        {
+            return true;
+        }
+
+        var voteDifference = Math.Abs((long)newVotes - oldVotes);
+        var percentageDifference = (double)voteDifference / oldVotes;
+
+        return voteDifference >= 20 && percentageDifference >= 0.05;
     }
 
     private IReadOnlyList<BaseItem> GetLibraryItems(PluginConfiguration config)
