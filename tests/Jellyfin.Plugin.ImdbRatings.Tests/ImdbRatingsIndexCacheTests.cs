@@ -41,7 +41,7 @@ public class ImdbRatingsIndexCacheTests
     {
         using var temp = new TempDirectory();
         var indexPath = temp.PathFor("title.ratings.idx");
-        await File.WriteAllBytesAsync(indexPath, new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 });
+        await File.WriteAllBytesAsync(indexPath, new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, TestContext.Current.CancellationToken);
 
         var cache = new ImdbRatingsIndexCache(indexPath, NullLogger.Instance);
 

@@ -64,7 +64,7 @@ public class ImdbRatingsParserValidationTests
     {
         using var temp = new TempDirectory();
         var path = temp.PathFor("title.ratings.tsv");
-        await File.WriteAllTextAsync(path, "tconst\taverageRating\tnumVotes\n");
+        await File.WriteAllTextAsync(path, "tconst\taverageRating\tnumVotes\n", TestContext.Current.CancellationToken);
 
         var parser = new ImdbRatingsParser(NullLogger<ImdbRatingsParser>.Instance);
 
@@ -79,7 +79,7 @@ public class ImdbRatingsParserValidationTests
     {
         using var temp = new TempDirectory();
         var path = temp.PathFor("title.ratings.tsv");
-        await File.WriteAllTextAsync(path, string.Empty);
+        await File.WriteAllTextAsync(path, string.Empty, TestContext.Current.CancellationToken);
 
         var parser = new ImdbRatingsParser(NullLogger<ImdbRatingsParser>.Instance);
 
@@ -115,7 +115,7 @@ public class ImdbRatingsParserValidationTests
     {
         using var temp = new TempDirectory();
         var path = temp.PathFor("title.ratings.tsv");
-        await File.WriteAllTextAsync(path, "tconst\taverageRating\tnumVotes\n");
+        await File.WriteAllTextAsync(path, "tconst\taverageRating\tnumVotes\n", TestContext.Current.CancellationToken);
 
         var parser = new ImdbRatingsParser(NullLogger<ImdbRatingsParser>.Instance);
 

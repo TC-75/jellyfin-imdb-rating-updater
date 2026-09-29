@@ -47,7 +47,8 @@ public class ImdbRatingsParserTests
         {
             await File.WriteAllTextAsync(
                 path,
-                "bad_header\n" + "tt0000001\t7.1\t100\n");
+                "bad_header\n" + "tt0000001\t7.1\t100\n",
+                TestContext.Current.CancellationToken);
 
             var parser = new ImdbRatingsParser(NullLogger<ImdbRatingsParser>.Instance);
 

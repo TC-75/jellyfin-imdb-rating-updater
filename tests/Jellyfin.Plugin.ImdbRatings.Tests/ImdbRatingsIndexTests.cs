@@ -262,8 +262,8 @@ public class ImdbRatingsIndexTests
             var indexPath = Path.Combine(directory, "title.ratings.idx");
             await CreateIndex((1u, 5.0f, 10), (2u, 6.0f, 20)).WriteAsync(indexPath, CancellationToken.None);
 
-            var bytes = await File.ReadAllBytesAsync(indexPath);
-            await File.WriteAllBytesAsync(indexPath, bytes[..(bytes.Length - 4)]);
+            var bytes = await File.ReadAllBytesAsync(indexPath, TestContext.Current.CancellationToken);
+            await File.WriteAllBytesAsync(indexPath, bytes[..(bytes.Length - 4)], TestContext.Current.CancellationToken);
 
             Assert.Null(await ImdbRatingsIndex.TryLoadAsync(indexPath, CancellationToken.None));
         }
@@ -282,16 +282,16 @@ public class ImdbRatingsIndexTests
             var indexPath = Path.Combine(directory, "title.ratings.idx");
             await CreateIndex((1u, 5.0f, 10)).WriteAsync(indexPath, CancellationToken.None);
 
-            var bytes = await File.ReadAllBytesAsync(indexPath);
+            var bytes = await File.ReadAllBytesAsync(indexPath, TestContext.Current.CancellationToken);
 
             var wrongMagic = bytes.ToArray();
             wrongMagic[0] = (byte)'X';
-            await File.WriteAllBytesAsync(indexPath, wrongMagic);
+            await File.WriteAllBytesAsync(indexPath, wrongMagic, TestContext.Current.CancellationToken);
             Assert.Null(await ImdbRatingsIndex.TryLoadAsync(indexPath, CancellationToken.None));
 
             var wrongVersion = bytes.ToArray();
             wrongVersion[8] = (byte)(ImdbRatingsIndex.FormatVersion + 1);
-            await File.WriteAllBytesAsync(indexPath, wrongVersion);
+            await File.WriteAllBytesAsync(indexPath, wrongVersion, TestContext.Current.CancellationToken);
             Assert.Null(await ImdbRatingsIndex.TryLoadAsync(indexPath, CancellationToken.None));
         }
         finally

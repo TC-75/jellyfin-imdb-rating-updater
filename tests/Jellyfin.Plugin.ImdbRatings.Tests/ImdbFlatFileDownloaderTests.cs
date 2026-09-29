@@ -28,7 +28,7 @@ public class ImdbFlatFileDownloaderTests
         var path = await downloader.GetRatingsFilePathAsync(CancellationToken.None);
 
         Assert.Equal(downloader.CachePath, path);
-        Assert.Equal(payload, await File.ReadAllTextAsync(path));
+        Assert.Equal(payload, await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
         Assert.Equal(1, handler.RequestCount);
         Assert.False(File.Exists(path + ".tmp"));
     }
@@ -60,13 +60,13 @@ public class ImdbFlatFileDownloaderTests
 
         // A stale but valid cache from a previous run.
         Directory.CreateDirectory(Path.GetDirectoryName(downloader.CachePath)!);
-        await File.WriteAllTextAsync(downloader.CachePath, "previous good data");
+        await File.WriteAllTextAsync(downloader.CachePath, "previous good data", TestContext.Current.CancellationToken);
         File.SetLastWriteTimeUtc(downloader.CachePath, DateTime.UtcNow - CacheMaxAge - TimeSpan.FromHours(1));
 
         await Assert.ThrowsAsync<InvalidDataException>(
             () => downloader.GetRatingsFilePathAsync(CancellationToken.None));
 
-        Assert.Equal("previous good data", await File.ReadAllTextAsync(downloader.CachePath));
+        Assert.Equal("previous good data", await File.ReadAllTextAsync(downloader.CachePath, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -108,7 +108,7 @@ public class ImdbFlatFileDownloaderTests
 
         var path = await downloader.GetRatingsFilePathAsync(CancellationToken.None);
 
-        Assert.Empty(await File.ReadAllBytesAsync(path));
+        Assert.Empty(await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
         Assert.False(File.Exists(downloader.CachePath + ".tmp"));
 
         var parser = new ImdbRatingsParser(NullLogger<ImdbRatingsParser>.Instance);
@@ -124,12 +124,12 @@ public class ImdbFlatFileDownloaderTests
         var downloader = new ImdbFlatFileDownloader(new StubHttpClientFactory(handler), NullLogger<ImdbFlatFileDownloader>.Instance, temp.Path);
 
         Directory.CreateDirectory(Path.GetDirectoryName(downloader.CachePath)!);
-        await File.WriteAllTextAsync(downloader.CachePath, "cached");
+        await File.WriteAllTextAsync(downloader.CachePath, "cached", TestContext.Current.CancellationToken);
         File.SetLastWriteTimeUtc(downloader.CachePath, DateTime.UtcNow - CacheMaxAge + TimeSpan.FromMinutes(30));
 
         var path = await downloader.GetRatingsFilePathAsync(CancellationToken.None);
 
-        Assert.Equal("cached", await File.ReadAllTextAsync(path));
+        Assert.Equal("cached", await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
         Assert.Equal(0, handler.RequestCount);
     }
 
@@ -141,12 +141,12 @@ public class ImdbFlatFileDownloaderTests
         var downloader = new ImdbFlatFileDownloader(new StubHttpClientFactory(handler), NullLogger<ImdbFlatFileDownloader>.Instance, temp.Path);
 
         Directory.CreateDirectory(Path.GetDirectoryName(downloader.CachePath)!);
-        await File.WriteAllTextAsync(downloader.CachePath, "stale data");
+        await File.WriteAllTextAsync(downloader.CachePath, "stale data", TestContext.Current.CancellationToken);
         File.SetLastWriteTimeUtc(downloader.CachePath, DateTime.UtcNow - CacheMaxAge - TimeSpan.FromMinutes(1));
 
         var path = await downloader.GetRatingsFilePathAsync(CancellationToken.None);
 
-        Assert.Equal("fresh data", await File.ReadAllTextAsync(path));
+        Assert.Equal("fresh data", await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
         Assert.Equal(1, handler.RequestCount);
     }
 
@@ -158,8 +158,8 @@ public class ImdbFlatFileDownloaderTests
             new StubHttpClientFactory(new StubHandler(Array.Empty<byte>())), NullLogger<ImdbFlatFileDownloader>.Instance, temp.Path);
 
         Directory.CreateDirectory(Path.GetDirectoryName(downloader.CachePath)!);
-        await File.WriteAllTextAsync(downloader.CachePath, "cached");
-        await File.WriteAllTextAsync(downloader.CachePath + ".tmp", "leftover from a failed run");
+        await File.WriteAllTextAsync(downloader.CachePath, "cached", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(downloader.CachePath + ".tmp", "leftover from a failed run", TestContext.Current.CancellationToken);
 
         Assert.True(downloader.InvalidateCache());
 
