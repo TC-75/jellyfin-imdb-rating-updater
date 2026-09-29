@@ -8,6 +8,9 @@
   <a href="https://github.com/voc0der/jellyfin-plugin-imdb-ratings/releases/latest">
     <img src="https://img.shields.io/github/v/release/voc0der/jellyfin-plugin-imdb-ratings?label=stable%20release" alt="Stable release version" />
   </a>
+  <a href="https://github.com/voc0der/jellyfin-plugin-imdb-ratings/blob/main/manifest.json">
+    <img src="https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fraw.githubusercontent.com%2Fvoc0der%2Fjellyfin-plugin-imdb-ratings%2Fmain%2Fmanifest.json&search=%22targetAbi%22%3A%5Cs*%22(%5Cd%2B%5C.%5Cd%2B)&replace=%241%2B&label=Jellyfin%20version&color=AA5CC3" alt="Minimum Jellyfin version" />
+  </a>
   <a href="https://github.com/voc0der/jellyfin-plugin-imdb-ratings/tree/main/tests">
     <img src="https://img.shields.io/badge/coverage-65%25-yellow" alt="Code coverage percentage" />
   </a>
