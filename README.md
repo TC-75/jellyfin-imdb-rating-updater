@@ -43,6 +43,7 @@ A Jellyfin plugin that downloads the [IMDb ratings flat file](https://datasets.i
 - Choose which library types to update (Movies, TV Series, or both)
 - Season ratings (opt-in) calculated as the average of eligible IMDb episode ratings in your library
 - Progress reporting in the Jellyfin task UI
+- Minimal recent-run history in plugin settings, including download errors and cache-fallback warnings
 
 ## Installation
 
@@ -77,3 +78,17 @@ The daily run time is configured in **Dashboard > Scheduled Tasks**; `3:00 AM` i
 - **Include Movies** — update movie ratings
 - **Include TV Series** — update series and episode ratings
 - **Calculate Season Ratings** — set each season's rating to the average of eligible IMDb episode ratings in your library; episodes without IMDb data or below the votes threshold are excluded (requires Include TV Series, default: off)
+
+The **Recent runs** box shows the five latest finished runs, newest first, with the local start time,
+duration, result, and a short summary. A run that uses an older cached file or cannot refresh the
+scan-time index is shown with a warning, even when Jellyfin reports the scheduled task as completed.
+Open the settings page again to see newly finished runs; viewing history does not trigger a download.
+If a displayed run failed or contains warnings, a connectivity hint below the history links to
+the dataset host, including when the run was later cancelled. The hint stays hidden when the
+displayed runs have no failures or warnings, or history is empty.
+
+History starts with the first run after installing this version and survives server restarts. It is
+stored separately from settings at `<Jellyfin data directory>/imdb-ratings/run-history.json` and
+replaced atomically after each run, retaining only five entries. Messages are bounded and omit URLs;
+full exception details remain in Jellyfin's normal server logs. Forced process termination can prevent
+the current run from being recorded.

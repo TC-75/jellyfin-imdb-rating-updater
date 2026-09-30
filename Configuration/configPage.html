@@ -100,6 +100,19 @@
                         </button>
                     </div>
                 </form>
+
+                <div class="verticalSection" style="margin-top: 2em;">
+                    <h2 class="sectionTitle">Recent runs</h2>
+                    <div id="imdbRecentRuns" role="status" aria-live="polite"
+                         style="border: 1px solid rgba(128, 128, 128, 0.35); border-radius: 4px; padding: 0.25em 1em; overflow-wrap: anywhere;">
+                        <p>Loading recent runs…</p>
+                    </div>
+                    <div class="fieldDescription">Last five runs, newest first. Warnings include use of an older cached ratings file.</div>
+                    <div id="imdbConnectivityHint" class="fieldDescription hide" style="margin-top: 0.75em;" aria-live="polite">
+                        Connectivity issues? Make sure the Jellyfin server can reach the
+                        <a href="https://datasets.imdbws.com/" target="_blank" rel="noopener noreferrer" class="button-link">IMDb webservice</a>.
+                    </div>
+                </div>
             </div>
         </div>
         <script type="text/javascript">
@@ -150,7 +163,71 @@
             return parsed;
         }
 
+        function renderRecentRuns(runs) {
+            runs = Array.isArray(runs) ? runs.slice(0, 5) : [];
+            var hasErrors = runs.some(function (run) {
+                var status = getConfigValue(run, 'Status', 'status', '');
+                var warnings = getConfigValue(run, 'Warnings', 'warnings', []);
+                return status === 'Failed' || status === 'Warning' || warnings.length > 0;
+            });
+            document.getElementById('imdbConnectivityHint').classList.toggle('hide', !hasErrors);
+
+            var container = document.getElementById('imdbRecentRuns');
+            container.textContent = '';
+            if (!runs.length) {
+                var empty = document.createElement('p');
+                empty.textContent = 'No runs recorded yet.';
+                container.appendChild(empty);
+                return;
+            }
+
+            runs.forEach(function (run, index) {
+                var row = document.createElement('div');
+                row.style.padding = '0.75em 0';
+                if (index > 0) {
+                    row.style.borderTop = '1px solid rgba(128, 128, 128, 0.25)';
+                }
+
+                var started = new Date(getConfigValue(run, 'StartedAtUtc', 'startedAtUtc', ''));
+                var finished = new Date(getConfigValue(run, 'FinishedAtUtc', 'finishedAtUtc', ''));
+                var seconds = Math.max(0, Math.round((finished - started) / 1000));
+                var duration = seconds < 60 ? seconds + 's' : Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's';
+                var heading = document.createElement('div');
+                var status = document.createElement('strong');
+                status.textContent = getConfigValue(run, 'Status', 'status', 'Unknown');
+                heading.appendChild(status);
+                heading.appendChild(document.createTextNode(' · ' + started.toLocaleString() + ' · ' + duration));
+                row.appendChild(heading);
+
+                var summary = document.createElement('div');
+                summary.style.marginTop = '0.25em';
+                summary.textContent = getConfigValue(run, 'Summary', 'summary', '');
+                row.appendChild(summary);
+
+                var warnings = getConfigValue(run, 'Warnings', 'warnings', []);
+                warnings.forEach(function (message) {
+                    var warning = document.createElement('div');
+                    warning.className = 'fieldDescription';
+                    warning.textContent = message;
+                    row.appendChild(warning);
+                });
+                container.appendChild(row);
+            });
+        }
+
+        function loadRecentRuns() {
+            return ApiClient.ajax({
+                type: 'GET',
+                url: ApiClient.getUrl('Plugins/ImdbRatings/RunHistory'),
+                dataType: 'json'
+            }).then(renderRecentRuns).catch(function () {
+                document.getElementById('imdbRecentRuns').textContent = 'Unable to load recent runs.';
+                document.getElementById('imdbConnectivityHint').classList.add('hide');
+            });
+        }
+
         document.getElementById('ImdbRatingsConfigPage').addEventListener('pageshow', function () {
+            loadRecentRuns();
             Dashboard.showLoadingMsg();
             ApiClient.getPluginConfiguration(ImdbRatingsConfig.pluginId).then(function (config) {
                 var minimumVotes = parseInt(getConfigValue(config, 'MinimumVotes', 'minimumVotes', 1), 10);
