@@ -60,6 +60,42 @@ public class RefreshImdbRatingsTask : IScheduledTask
 
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
+        var run = new RefreshRun { StartedAtUtc = DateTime.UtcNow };
+        try
+        {
+            await ExecuteRefreshAsync(progress, run, cancellationToken).ConfigureAwait(false);
+            run.Status = run.Warnings.Count == 0 ? "Completed" : "Warning";
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            run.Status = "Cancelled";
+            run.Summary = "Refresh cancelled.";
+            throw;
+        }
+        catch (Exception ex)
+        {
+            run.Status = "Failed";
+            run.Summary = RefreshRun.DescribeError(ex);
+            throw;
+        }
+        finally
+        {
+            run.FinishedAtUtc = DateTime.UtcNow;
+            try
+            {
+                // Record cancellation too, without using the cancelled scheduler token.
+                new RefreshRunHistory(_dataPath, _logger).Append(run);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // File-access failures must not change the task's outcome or hide its original exception.
+                _logger.LogWarning(ex, "Failed to save IMDb ratings run history");
+            }
+        }
+    }
+
+    private async Task ExecuteRefreshAsync(IProgress<double> progress, RefreshRun run, CancellationToken cancellationToken)
+    {
         var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
 
         _logger.LogInformation("Starting IMDb ratings refresh (minVotes={MinVotes}, movies={Movies}, series={Series}, seasonAverages={SeasonAverages})",
@@ -84,9 +120,10 @@ public class RefreshImdbRatingsTask : IScheduledTask
         if (items.Count == 0)
         {
             _logger.LogInformation("Found 0 library items with IMDb IDs");
+            run.Summary = "No eligible library items to update.";
 
             // An empty library still needs an index built, so the provider can rate the very first scan.
-            await TryWriteProviderIndexAsync(downloader, parser, config, cancellationToken).ConfigureAwait(false);
+            await TryWriteProviderIndexAsync(downloader, parser, config, run, cancellationToken).ConfigureAwait(false);
             progress.Report(100);
             return;
         }
@@ -109,8 +146,9 @@ public class RefreshImdbRatingsTask : IScheduledTask
         if (libraryImdbIds.Count == 0)
         {
             _logger.LogWarning("No valid IMDb IDs found on selected library items — nothing to update");
+            run.Summary = "No valid IMDb IDs to update.";
 
-            await TryWriteProviderIndexAsync(downloader, parser, config, cancellationToken).ConfigureAwait(false);
+            await TryWriteProviderIndexAsync(downloader, parser, config, run, cancellationToken).ConfigureAwait(false);
             progress.Report(100);
             return;
         }
@@ -123,6 +161,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
             parser,
             libraryImdbIds,
             progress,
+            run,
             cancellationToken).ConfigureAwait(false);
         progress.Report(30);
         int lastScanProgressBucket = 30;
@@ -275,10 +314,11 @@ public class RefreshImdbRatingsTask : IScheduledTask
         }
 
         // Step 6: Refresh the compact index the scan-time metadata provider reads.
-        await TryWriteProviderIndexAsync(downloader, parser, config, cancellationToken).ConfigureAwait(false);
+        await TryWriteProviderIndexAsync(downloader, parser, config, run, cancellationToken).ConfigureAwait(false);
 
         progress.Report(100);
         var skippedTotal = skippedMissingImdbId + skippedBelowMinimumVotes + skippedUnchanged;
+        run.Summary = $"{pendingUpdates.Count} ratings updated; {skippedTotal} skipped; {notFound} not found.";
         _logger.LogInformation(
             "IMDb ratings refresh complete: {Updated} updated ({SeasonUpdated} seasons from episode averages), {Skipped} skipped ({Unchanged} unchanged, {BelowMinimum} below minimum votes, {MissingImdbId} missing IMDb ID), {NotFound} not found in IMDb ratings",
             pendingUpdates.Count,
@@ -415,6 +455,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
         ImdbFlatFileDownloader downloader,
         ImdbRatingsParser parser,
         PluginConfiguration config,
+        RefreshRun run,
         CancellationToken cancellationToken)
     {
         var indexPath = ImdbRatingsIndex.GetIndexPath(_dataPath);
@@ -429,7 +470,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
         try
         {
             // The task is the sole writer of the index and may download to build it; the provider never does.
-            var ratingsFilePath = await GetRatingsFilePathWithTransientRetryAsync(downloader, cancellationToken)
+            var ratingsFilePath = await GetRatingsFilePathWithTransientRetryAsync(downloader, run, cancellationToken)
                 .ConfigureAwait(false);
 
             var index = await parser.BuildIndexAsync(ratingsFilePath, cancellationToken).ConfigureAwait(false);
@@ -467,6 +508,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to build IMDb ratings index; scan-time ratings will use the previous index if present");
+            run.AddWarning($"Scan-time index was not refreshed: {RefreshRun.DescribeError(ex)}");
         }
     }
 
@@ -475,11 +517,12 @@ public class RefreshImdbRatingsTask : IScheduledTask
         ImdbRatingsParser parser,
         IReadOnlySet<string> includeImdbIds,
         IProgress<double> progress,
+        RefreshRun run,
         CancellationToken cancellationToken)
     {
         try
         {
-            var filePath = await GetRatingsFilePathWithTransientRetryAsync(downloader, cancellationToken).ConfigureAwait(false);
+            var filePath = await GetRatingsFilePathWithTransientRetryAsync(downloader, run, cancellationToken).ConfigureAwait(false);
             progress.Report(10);
             return await parser.ParseFilteredAsync(filePath, includeImdbIds, cancellationToken).ConfigureAwait(false);
         }
@@ -488,6 +531,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
             // Bad data on disk — invalidate cache and re-download.
             _logger.LogWarning(ex,
                 "IMDb ratings data failed validation on first attempt; invalidating cache and retrying");
+            run.AddWarning($"Ratings data was invalid; retried download. {RefreshRun.DescribeError(ex)}");
 
             downloader.InvalidateCache();
             return await RetryDownloadAndParseAsync(
@@ -495,6 +539,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
                 parser,
                 includeImdbIds,
                 progress,
+                run,
                 cancellationToken).ConfigureAwait(false);
         }
     }
@@ -504,13 +549,14 @@ public class RefreshImdbRatingsTask : IScheduledTask
         ImdbRatingsParser parser,
         IReadOnlySet<string> includeImdbIds,
         IProgress<double> progress,
+        RefreshRun run,
         CancellationToken cancellationToken)
     {
         try
         {
             // Cache invalidation above forces a fresh download. Use the same timeout-aware retry path as the
             // initial attempt so an exhausted HttpClient timeout is reported as failure, not cancellation.
-            var filePath = await GetRatingsFilePathWithTransientRetryAsync(downloader, cancellationToken)
+            var filePath = await GetRatingsFilePathWithTransientRetryAsync(downloader, run, cancellationToken)
                 .ConfigureAwait(false);
             progress.Report(10);
             return await parser.ParseFilteredAsync(filePath, includeImdbIds, cancellationToken).ConfigureAwait(false);
@@ -524,6 +570,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
 
     private async Task<string> GetRatingsFilePathWithTransientRetryAsync(
         ImdbFlatFileDownloader downloader,
+        RefreshRun run,
         CancellationToken cancellationToken)
     {
         try
@@ -534,6 +581,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
         {
             // Transient download error — try once more after a short delay, or fall back to stale cache.
             _logger.LogWarning(ex, "Transient network error downloading IMDb ratings; retrying once after delay");
+            run.AddWarning($"Download failed; retried once. {RefreshRun.DescribeError(ex)}");
 
             await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
 
@@ -561,6 +609,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
 
                 _logger.LogWarning(retryEx,
                     "Download failed after retry; falling back to stale cache at {Path}", downloader.CachePath);
+                run.AddWarning($"Used an older cached ratings file after download failed. {RefreshRun.DescribeError(retryEx)}");
 
                 return downloader.CachePath;
             }
