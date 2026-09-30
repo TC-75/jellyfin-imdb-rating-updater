@@ -86,9 +86,9 @@ public class RefreshImdbRatingsTask : IScheduledTask
                 // Record cancellation too, without using the cancelled scheduler token.
                 new RefreshRunHistory(_dataPath, _logger).Append(run);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                // History must never change the task's outcome or hide its original exception.
+                // File-access failures must not change the task's outcome or hide its original exception.
                 _logger.LogWarning(ex, "Failed to save IMDb ratings run history");
             }
         }

@@ -94,6 +94,20 @@ public class RefreshImdbRatingsTaskHistoryTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_HistoryWriteFails_DoesNotFailSuccessfulRefresh()
+    {
+        using var temp = new TempDirectory();
+        await WriteCacheAsync(temp, stale: false);
+        File.WriteAllText(temp.PathFor("imdb-ratings"), "A file blocks the history directory.");
+        using var handler = new ResponseHandler(HttpStatusCode.Forbidden);
+
+        await CreateTask(temp, handler, new[] { CreateMovie() })
+            .ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_HistoryWriteFails_DoesNotHideOriginalFailure()
     {
         using var temp = new TempDirectory();
