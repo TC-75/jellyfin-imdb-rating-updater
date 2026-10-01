@@ -42,7 +42,7 @@ namespace Jellyfin.Plugin.ImdbRatings.Providers;
 /// </remarks>
 public class ImdbRatingsItemProvider :
     ICustomMetadataProvider<Movie>,
-    ICustomMetadataProvider<Series>,
+    ICustomMetadataProvider<Series>
 {
     private readonly ImdbRatingsIndexCache _indexCache;
     private readonly ILogger<ImdbRatingsItemProvider> _logger;
