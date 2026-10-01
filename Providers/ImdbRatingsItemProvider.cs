@@ -154,7 +154,10 @@ public class ImdbRatingsItemProvider :
         }
 
         // Shared with the scheduled task so the two paths agree on what counts as a change.
-        if (RatingComparison.IsUnchanged(item.CommunityRating, rating))
+        var ratingUnchanged = RatingComparison.IsUnchanged(item.CommunityRating, rating);
+        var votesChanged = HasMeaningfulVoteChange(item.CustomRating, votes);
+
+        if (ratingUnchanged && !votesChanged)
         {
             return ItemUpdateType.None;
         }
@@ -170,6 +173,30 @@ public class ImdbRatingsItemProvider :
         }
 
         item.CommunityRating = rating;
+
+        if (votesChanged)
+        {
+            item.CustomRating = votes.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         return ItemUpdateType.MetadataDownload;
+    }
+
+    private static bool HasMeaningfulVoteChange(string? currentCustomRating, int newVotes)
+    {
+        if (!int.TryParse(
+                currentCustomRating,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var oldVotes)
+            || oldVotes <= 0)
+        {
+            return true;
+        }
+
+        var voteDifference = Math.Abs((long)newVotes - oldVotes);
+        var percentageDifference = (double)voteDifference / oldVotes;
+
+        return voteDifference >= 20 && percentageDifference >= 0.05;
     }
 }
