@@ -209,13 +209,24 @@ public class RefreshImdbRatingsTask : IScheduledTask
             else
             {
                 var newRating = ratingData.Rating;
-                if (RatingComparison.IsUnchanged(item.CommunityRating, newRating))
+                var ratingUnchanged = RatingComparison.IsUnchanged(item.CommunityRating, newRating);
+                var votesChanged = HasMeaningfulVoteChange(item.CustomRating, ratingData.Votes);
+
+                if (ratingUnchanged && !votesChanged)
                 {
                     skippedUnchanged++;
                 }
                 else
                 {
-                    pendingUpdates.Add(new PendingRatingUpdate(item, item.GetParent(), item.CommunityRating, newRating));
+                    pendingUpdates.Add(new PendingRatingUpdate(
+                        item,
+                        item.GetParent(),
+                        item.CommunityRating,
+                        item.CustomRating,
+                        newRating,
+                        votesChanged
+                            ? ratingData.Votes.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                            : item.CustomRating));
                 }
             }
 
@@ -288,7 +299,13 @@ public class RefreshImdbRatingsTask : IScheduledTask
                     continue;
                 }
 
-                pendingUpdates.Add(new PendingRatingUpdate(season, season.GetParent(), season.CommunityRating, avgRating));
+                pendingUpdates.Add(new PendingRatingUpdate(
+                    season,
+                    season.GetParent(),
+                    season.CommunityRating,
+                    season.CustomRating,
+                    avgRating,
+                    season.CustomRating));
                 seasonUpdated++;
             }
 
@@ -698,7 +715,13 @@ public class RefreshImdbRatingsTask : IScheduledTask
     /// <summary>
     /// A single rating change, captured before anything is mutated so a failed save can be undone.
     /// </summary>
-    internal readonly record struct PendingRatingUpdate(BaseItem Item, BaseItem? Parent, float? OldRating, float NewRating);
+    internal readonly record struct PendingRatingUpdate(
+    BaseItem Item,
+    BaseItem? Parent,
+    float? OldRating,
+    string? OldCustomRating,
+    float NewRating,
+    string? NewCustomRating);
 
     private sealed class LibraryManagerUpdateSink : IItemUpdateSink
     {
