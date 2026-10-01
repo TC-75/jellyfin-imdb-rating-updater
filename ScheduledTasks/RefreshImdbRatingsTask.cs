@@ -384,6 +384,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
                     for (int j = 0; j < chunk.Length; j++)
                     {
                         chunk[j].Item.CommunityRating = chunk[j].NewRating;
+                        chunk[j].Item.CustomRating = chunk[j].NewCustomRating;
                         try
                         {
                             await sink.UpdateItemAsync(
@@ -395,6 +396,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
                         catch
                         {
                             chunk[j].Item.CommunityRating = chunk[j].OldRating;
+                            chunk[j].Item.CustomRating = chunk[j].OldCustomRating;
                             throw;
                         }
                     }
@@ -406,6 +408,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
                     for (int j = 0; j < chunk.Length; j++)
                     {
                         chunk[j].Item.CommunityRating = chunk[j].NewRating;
+                        chunk[j].Item.CustomRating = chunk[j].NewCustomRating;
                         chunkItems[j] = chunk[j].Item;
                     }
 
@@ -419,6 +422,7 @@ public class RefreshImdbRatingsTask : IScheduledTask
                         for (int j = 0; j < chunk.Length; j++)
                         {
                             chunk[j].Item.CommunityRating = chunk[j].OldRating;
+                            chunk[j].Item.CustomRating = chunk[j].OldCustomRating;
                         }
 
                         throw;
@@ -652,6 +656,24 @@ public class RefreshImdbRatingsTask : IScheduledTask
     {
         ArgumentNullException.ThrowIfNull(exception);
         return new HttpRequestException("IMDb ratings download timed out after retry.", exception);
+    }
+
+    private static bool HasMeaningfulVoteChange(string? currentCustomRating, int newVotes)
+    {
+        if (!int.TryParse(
+                currentCustomRating,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var oldVotes)
+            || oldVotes <= 0)
+        {
+            return true;
+        }
+
+        var voteDifference = Math.Abs((long)newVotes - oldVotes);
+        var percentageDifference = (double)voteDifference / oldVotes;
+
+        return voteDifference >= 20 && percentageDifference >= 0.05;
     }
 
     private static bool IsMetadataProviderCurrentlyEnabled(PluginConfiguration taskConfiguration)
