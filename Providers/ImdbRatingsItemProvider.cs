@@ -37,13 +37,12 @@ namespace Jellyfin.Plugin.ImdbRatings.Providers;
 /// check, which makes the plugin's own toggle the single source of truth.
 /// </para>
 ///
-/// Seasons are deliberately not handled here. A season rating is the average of its episodes' ratings, which
-/// needs the whole season in hand rather than a single item, so it stays with the scheduled task.
+/// Episodes are deliberately not handled here. Episode ratings are only queried by the scheduled task
+/// when needed to calculate optional season averages.
 /// </remarks>
 public class ImdbRatingsItemProvider :
     ICustomMetadataProvider<Movie>,
     ICustomMetadataProvider<Series>,
-    ICustomMetadataProvider<Episode>
 {
     private readonly ImdbRatingsIndexCache _indexCache;
     private readonly ILogger<ImdbRatingsItemProvider> _logger;
@@ -69,10 +68,6 @@ public class ImdbRatingsItemProvider :
 
     /// <inheritdoc />
     public Task<ItemUpdateType> FetchAsync(Series item, MetadataRefreshOptions options, CancellationToken cancellationToken)
-        => ApplyRatingAsync(item, IsSeriesEnabled, cancellationToken);
-
-    /// <inheritdoc />
-    public Task<ItemUpdateType> FetchAsync(Episode item, MetadataRefreshOptions options, CancellationToken cancellationToken)
         => ApplyRatingAsync(item, IsSeriesEnabled, cancellationToken);
 
     /// <summary>
